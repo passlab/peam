@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.Composite;
@@ -342,45 +343,65 @@ public class SampleView extends TmfView {
 	}
 
 	private void exportToExcel(Map<Long, Double>[] threadExecutionTimes) {
-		String csvFile = "/Users/bhavanachappidi/Downloads/example.csv";
-		BufferedWriter writer = null;
+		String originalFormatPath = "/Users/bhavanachappidi/Downloads/parallel_thread_times_original.csv";
+		String matrixFormatPath = "/Users/bhavanachappidi/Downloads/parallel_thread_times_matrix.csv";
+		
+		BufferedWriter originalWriter = null;
+		BufferedWriter matrixWriter = null;
+		
 		try {
-			writer = new BufferedWriter(new FileWriter(csvFile));
-			String excelHeader = "Thread#,Parallel Region,Execution Time";
-			writer.write(excelHeader);
-			writer.newLine();
+			originalWriter = new BufferedWriter(new FileWriter(originalFormatPath));
+			matrixWriter = new BufferedWriter(new FileWriter(matrixFormatPath));
 
-			int threadCount = threadExecutionTimes.length;
-			double[] x = new double[threadCount]; // X values (Thread Numbers)
+			originalWriter.write("Thread#,Parallel Region,Execution Time");
+	        	originalWriter.newLine();
 
-			// initially i < threadCount, now MAX_THREADS
-			for (int i = 0; i < threadCount; i++) {
+			Set<Long> allParallelRegions = new TreeSet<>();
+			for (Map<Long, Double> threadData : threadExecutionTimes) {
+				allParallelRegions.addAll(threadData.keySet());
+	        	}
+			
+			matrixWriter.write("Thread#");
+			for (Long region : allParallelRegions) {
+	            		matrixWriter.write("," + region);
+	        	}
+	        	matrixWriter.newLine();
 
-				x[i] = i;
+			// Processing data
+			for (int threadNum = 0; threadNum < threadExecutionTimes.length; threadNum++) {
 
 				// Get execution times for each parallel_codeptr in this thread
-				Map<Long, Double> phases = threadExecutionTimes[i];
-				String excelRow = null;
-				for (Map.Entry<Long, Double> entry : phases.entrySet()) {
-					excelRow = new String();
+				Map<Long, Double> threadData = threadExecutionTimes[threadNum];
+				if (threadData.isEmpty()) {
+	                		continue;
+	            		}
+				matrixWriter.write(String.valueOf(threadNum));
+				
+				for (Long region : allParallelRegions) {
+					Double executionTime = threadData.get(region);
 
-					Long parallelCodePtr = entry.getKey();
-					double executionTime = entry.getValue();
-					excelRow = i + "," + parallelCodePtr + "," + executionTime;
-					writer.write(excelRow);
-					writer.newLine();
+					matrixWriter.write("," + (executionTime != null ? executionTime : ""));
+					if (executionTime != null) {
+	                    			originalWriter.write(threadNum + "," + region + "," + executionTime);
+	                    			originalWriter.newLine();
+	                		}
 
 				}
-
+				matrixWriter.newLine();
 			}
 
-			System.out.println("CSV file created successfully!");
+			System.out.println("CSV files created successfully!");
+			System.out.println("Original format: " + originalFormatPath);
+	        	System.out.println("Matrix format: " + matrixFormatPath);
 		} catch (IOException e) {
 			e.printStackTrace();
 		} finally {
 			try {
-				if (writer != null) {
-					writer.close();
+				if (originalWriter != null) {
+					originalWriter.close();
+				}
+				if (matrixWriter != null) {
+					matrixWriter.close();
 				}
 			} catch (IOException e) {
 				e.printStackTrace();
