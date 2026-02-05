@@ -1,4 +1,4 @@
-# Performance and Execution Monitoring and Analysis
+# Performance and Execution Analysis and Monitoring (PEAM)
 
 ### Python script
 This repo comes with a few Python scripts which can dump program statistics into CSV format for analysis.
