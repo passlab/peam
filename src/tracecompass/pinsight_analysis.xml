@@ -1094,8 +1094,311 @@
 		</eventHandler>
 		
 		<!-- =============================================================================================== -->
+		<!-- ============== HIP: states and event handlers for processing HIP/ROCTracer records =========== -->
+		<!-- =============================================================================================== -->
+		<!-- Mirrors the CUDA block. devId encodes the APU and (on multi-APU runs)
+		     also separates MPI ranks (AMG: devId = rank + 4). Schema verified vs
+		     src/roctracer_lttng_ust_tracepoint.h. NOTE: GPU activity records
+		     (hipKernelActivity/hipMemcpyActivity) carry their own begin_ns/end_ns
+		     but arrive at flush time, so they cannot become intervals in a state
+		     provider (which keys on the event's own timestamp); the states below are
+		     the HOST-side API spans (correct begin/end pairs), as the CUDA block. -->
+		<definedValue name="HIP_STATE_NOT_USED"        value="10800" />
+		<definedValue name="HIP_STATE_MEMCPY_H2H"      value="10801" />
+		<definedValue name="HIP_STATE_MEMCPY_H2D"      value="10802" />
+		<definedValue name="HIP_STATE_MEMCPY_D2H"      value="10803" />
+		<definedValue name="HIP_STATE_MEMCPY_D2D"      value="10804" />
+		<definedValue name="HIP_STATE_MEMCPY_DEFAULT"  value="10805" />
+		<definedValue name="HIP_STATE_KERNEL_EXE"      value="10820" />
+		<definedValue name="HIP_STATE_MALLOC"          value="10830" />
+		<definedValue name="HIP_STATE_FREE"            value="10831" />
+		<definedValue name="HIP_STATE_DEVICE_SYNC"     value="10840" />
+		<definedValue name="HIP_STATE_STREAM_SYNC"     value="10841" />
+
+		<location id="HIPDevice">
+			<stateAttribute type="constant" value="HIP Device" />
+			<stateAttribute type="eventField" value="devId" />
+		</location>
+		<location id="HIPDeviceKernel">
+			<stateAttribute type="location" value="HIPDevice" />
+			<stateAttribute type="constant" value="HIP Kernel" />
+			<stateAttribute type="eventField" value="hip_func" />
+		</location>
+
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipKernelLaunch_begin">
+			<stateChange>
+				<stateAttribute type="location" value="HIPDevice" />
+				<stateValue type="int" value="$HIP_STATE_KERNEL_EXE" />
+			</stateChange>
+			<stateChange>
+				<stateAttribute type="location" value="HIPDeviceKernel" />
+				<stateValue type="int" value="$HIP_STATE_KERNEL_EXE" />
+			</stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipKernelLaunch_end">
+			<stateChange>
+				<stateAttribute type="location" value="HIPDevice" />
+				<stateValue type="int" value="$HIP_STATE_NOT_USED" />
+			</stateChange>
+			<stateChange>
+				<stateAttribute type="location" value="HIPDeviceKernel" />
+				<stateValue type="int" value="$HIP_STATE_NOT_USED" />
+			</stateChange>
+		</eventHandler>
+
+		<!-- hipMemcpy (sync): direction is the hipMemcpyKind enum field -->
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipMemcpy_begin">
+			<stateChange>
+				<if><condition operator="eq">
+					<stateValue type="eventField" value="hipMemcpyKind" />
+					<stateValue type="string" value="hipMemcpyHostToHost" />
+				</condition></if>
+				<then>
+					<stateAttribute type="location" value="HIPDevice" />
+					<stateValue type="int" value="$HIP_STATE_MEMCPY_H2H" />
+				</then>
+				<else>
+					<if><condition operator="eq">
+						<stateValue type="eventField" value="hipMemcpyKind" />
+						<stateValue type="string" value="hipMemcpyHostToDevice" />
+					</condition></if>
+					<then>
+						<stateAttribute type="location" value="HIPDevice" />
+						<stateValue type="int" value="$HIP_STATE_MEMCPY_H2D" />
+					</then>
+					<else>
+						<if><condition operator="eq">
+							<stateValue type="eventField" value="hipMemcpyKind" />
+							<stateValue type="string" value="hipMemcpyDeviceToHost" />
+						</condition></if>
+						<then>
+							<stateAttribute type="location" value="HIPDevice" />
+							<stateValue type="int" value="$HIP_STATE_MEMCPY_D2H" />
+						</then>
+						<else>
+							<if><condition operator="eq">
+								<stateValue type="eventField" value="hipMemcpyKind" />
+								<stateValue type="string" value="hipMemcpyDeviceToDevice" />
+							</condition></if>
+							<then>
+								<stateAttribute type="location" value="HIPDevice" />
+								<stateValue type="int" value="$HIP_STATE_MEMCPY_D2D" />
+							</then>
+							<else>
+								<stateAttribute type="location" value="HIPDevice" />
+								<stateValue type="int" value="$HIP_STATE_MEMCPY_DEFAULT" />
+							</else>
+						</else>
+					</else>
+				</else>
+			</stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipMemcpy_end">
+			<stateChange>
+				<stateAttribute type="location" value="HIPDevice" />
+				<stateValue type="int" value="$HIP_STATE_NOT_USED" />
+			</stateChange>
+		</eventHandler>
+
+		<!-- hipMemcpyAsync: same hipMemcpyKind field -->
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipMemcpyAsync_begin">
+			<stateChange>
+				<if><condition operator="eq">
+					<stateValue type="eventField" value="hipMemcpyKind" />
+					<stateValue type="string" value="hipMemcpyHostToDevice" />
+				</condition></if>
+				<then>
+					<stateAttribute type="location" value="HIPDevice" />
+					<stateValue type="int" value="$HIP_STATE_MEMCPY_H2D" />
+				</then>
+				<else>
+					<if><condition operator="eq">
+						<stateValue type="eventField" value="hipMemcpyKind" />
+						<stateValue type="string" value="hipMemcpyDeviceToHost" />
+					</condition></if>
+					<then>
+						<stateAttribute type="location" value="HIPDevice" />
+						<stateValue type="int" value="$HIP_STATE_MEMCPY_D2H" />
+					</then>
+					<else>
+						<stateAttribute type="location" value="HIPDevice" />
+						<stateValue type="int" value="$HIP_STATE_MEMCPY_DEFAULT" />
+					</else>
+				</else>
+			</stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipMemcpyAsync_end">
+			<stateChange>
+				<stateAttribute type="location" value="HIPDevice" />
+				<stateValue type="int" value="$HIP_STATE_NOT_USED" />
+			</stateChange>
+		</eventHandler>
+
+		<!-- hipMalloc / hipFree -->
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipMalloc_begin">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_MALLOC" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipMalloc_end">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_NOT_USED" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipFree_begin">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_FREE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipFree_end">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_NOT_USED" /></stateChange>
+		</eventHandler>
+
+		<!-- hipDeviceSynchronize / hipStreamSynchronize -->
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipDeviceSync_begin">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_DEVICE_SYNC" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipDeviceSync_end">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_NOT_USED" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipStreamSync_begin">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_STREAM_SYNC" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="roctracer_pinsight_lttng_ust:hipStreamSync_end">
+			<stateChange><stateAttribute type="location" value="HIPDevice" /><stateValue type="int" value="$HIP_STATE_NOT_USED" /></stateChange>
+		</eventHandler>
+
+		<!-- =============================================================================================== -->
 		<!-- ============== MPI: states and event handlers for processing MPI trace records ============= -->
 		<!-- =============================================================================================== -->
+		<!-- Per-RANK -> per-THREAD timeline keyed on the "MPI Rank" top-level grouping
+		     so a multi-rank run shows one sub-tree per rank. Schema verified vs
+		     src/pmpi_lttng_ust_tracepoint.h (mpirank, global_thread_num).
+		     begin -> call category state ; end -> NOT_IN_MPI. -->
+		<definedValue name="MPI_STATE_NOT_IN_MPI"      value="10900" />
+		<definedValue name="MPI_STATE_IN_INIT"         value="10901" />
+		<definedValue name="MPI_STATE_IN_FINALIZE"     value="10902" />
+		<definedValue name="MPI_STATE_IN_P2P"          value="10910" />
+		<definedValue name="MPI_STATE_IN_COLLECTIVE"   value="10920" />
+		<definedValue name="MPI_STATE_IN_WAIT"         value="10930" />
+
+		<location id="MPIRank">
+			<stateAttribute type="constant" value="MPI Rank" />
+			<stateAttribute type="eventField" value="mpirank" />
+		</location>
+		<location id="MPIRankThread">
+			<stateAttribute type="location" value="MPIRank" />
+			<stateAttribute type="constant" value="Thread" />
+			<stateAttribute type="eventField" value="global_thread_num" />
+		</location>
+
+		<!-- Init / Finalize -->
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Init_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_INIT" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Init_thread_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_INIT" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Finalize_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_FINALIZE" /></stateChange>
+		</eventHandler>
+		<!-- Point-to-point: Send, Recv, Isend, Irecv, Sendrecv -->
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Send_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_P2P" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Recv_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_P2P" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Isend_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_P2P" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Irecv_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_P2P" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Sendrecv_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_P2P" /></stateChange>
+		</eventHandler>
+		<!-- Collectives -->
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Barrier_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Reduce_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Allreduce_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Bcast_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Gather_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Allgather_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Scatter_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Alltoall_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_COLLECTIVE" /></stateChange>
+		</eventHandler>
+		<!-- Completion: Wait, Waitall -->
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Wait_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_WAIT" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Waitall_begin">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_IN_WAIT" /></stateChange>
+		</eventHandler>
+		<!-- All MPI *_end events return the thread to NOT_IN_MPI -->
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Init_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Init_thread_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Finalize_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Send_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Recv_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Isend_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Irecv_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Sendrecv_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Barrier_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Reduce_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Allreduce_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Bcast_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Gather_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Allgather_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Scatter_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Alltoall_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Wait_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
+		<eventHandler eventName="pmpi_pinsight_lttng_ust:MPI_Waitall_end">
+			<stateChange><stateAttribute type="location" value="MPIRankThread" /><stateValue type="int" value="$MPI_STATE_NOT_IN_MPI" /></stateChange>
+		</eventHandler>
 	</stateProvider>
 
 	<!-- This is the definition of the time-graph view -->
@@ -1228,8 +1531,29 @@
 		<definedValue name="CUDA_STATE_CUDA_KERNEL_EXE" value="10720" color="#008000" />     <!-- Green         rgb(0, 128, 0) -->
 		
 		<!-- =============================================================================================== -->
+		<!-- ============== Color map for HIP states ================================================= -->
+		<!-- =============================================================================================== -->
+		<definedValue name="HIP_STATE_NOT_USED"       value="10800" color="#FFFFFF" /> <!-- white -->
+		<definedValue name="HIP_STATE_MEMCPY_H2H"     value="10801" color="#DA70D6" /> <!-- orchid -->
+		<definedValue name="HIP_STATE_MEMCPY_H2D"     value="10802" color="#BF40BF" /> <!-- bright purple -->
+		<definedValue name="HIP_STATE_MEMCPY_D2H"     value="10803" color="#800080" /> <!-- purple -->
+		<definedValue name="HIP_STATE_MEMCPY_D2D"     value="10804" color="#7F00FF" /> <!-- violet -->
+		<definedValue name="HIP_STATE_MEMCPY_DEFAULT" value="10805" color="#5D3FD3" /> <!-- iris -->
+		<definedValue name="HIP_STATE_KERNEL_EXE"     value="10820" color="#008000" /> <!-- green -->
+		<definedValue name="HIP_STATE_MALLOC"         value="10830" color="#FFA500" /> <!-- orange -->
+		<definedValue name="HIP_STATE_FREE"           value="10831" color="#FFD700" /> <!-- gold -->
+		<definedValue name="HIP_STATE_DEVICE_SYNC"    value="10840" color="#FF0000" /> <!-- red -->
+		<definedValue name="HIP_STATE_STREAM_SYNC"    value="10841" color="#CD5C5C" /> <!-- indianred -->
+
+		<!-- =============================================================================================== -->
 		<!-- ============== Color map for MPI states ================================================= -->
 		<!-- =============================================================================================== -->
+		<definedValue name="MPI_STATE_NOT_IN_MPI"     value="10900" color="#FFFFFF" /> <!-- white -->
+		<definedValue name="MPI_STATE_IN_INIT"        value="10901" color="#20B2AA" /> <!-- light seagreen -->
+		<definedValue name="MPI_STATE_IN_FINALIZE"    value="10902" color="#2E8B57" /> <!-- seagreen -->
+		<definedValue name="MPI_STATE_IN_P2P"         value="10910" color="#1E90FF" /> <!-- dodgerblue -->
+		<definedValue name="MPI_STATE_IN_COLLECTIVE"  value="10920" color="#FF8C00" /> <!-- darkorange -->
+		<definedValue name="MPI_STATE_IN_WAIT"        value="10930" color="#8B0000" /> <!-- dark red -->
 
 		<!-- =============================================================================================== -->
 		<!-- ======================= OS Thread timeGraph view ================================================= -->
@@ -1329,6 +1653,36 @@
 				<entry path="*" displayText="true"><display type="self" /> <!-- CUDA Kernel -->
 					<entry path="*" displayText="true"><display type="self" /> <!-- kernel_func -->
 						<entry path="*" displayText="true"><display type="self" /> <!-- state -->
+						</entry>
+					</entry>
+				</entry>
+			</entry>
+		</entry>
+
+		<!-- =============================================================================================== -->
+		<!-- ======================= HIP timeGraph view ================================================= -->
+		<!-- =============================================================================================== -->
+		<entry path="HIP Device"><display type="self" />
+			<entry path="*" displayText="true"><display type="self" /> <!-- devId -->
+				<entry path="*" displayText="true"><display type="self" /> <!-- device state -->
+				</entry>
+				<entry path="*" displayText="true"><display type="self" /> <!-- HIP Kernel -->
+					<entry path="*" displayText="true"><display type="self" /> <!-- hip_func -->
+						<entry path="*" displayText="true"><display type="self" /> <!-- kernel state -->
+						</entry>
+					</entry>
+				</entry>
+			</entry>
+		</entry>
+
+		<!-- =============================================================================================== -->
+		<!-- ======================= MPI Rank timeGraph view ================================================= -->
+		<!-- =============================================================================================== -->
+		<entry path="MPI Rank"><display type="self" />
+			<entry path="*" displayText="true"><display type="self" /> <!-- mpirank -->
+				<entry path="*" displayText="true"><display type="self" /> <!-- "Thread" constant -->
+					<entry path="*" displayText="true"><display type="self" /> <!-- global_thread_num -->
+						<entry path="*" displayText="true"><display type="self" /> <!-- thread MPI state -->
 						</entry>
 					</entry>
 				</entry>
