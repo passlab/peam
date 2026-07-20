@@ -1,42 +1,84 @@
-# Performance and Execution Analysis and Monitoring (PEAM)
+# PEAM — Performance and Execution Analysis and Monitoring
 
-### Python script
-This repo comes with a few Python scripts which can dump program statistics into CSV format for analysis.
+PEAM is the analysis and visualization companion to
+[PInsight](https://github.com/passlab/pinsight). PInsight traces parallel
+applications (OpenMP/OMPT, MPI/PMPI, GPU via CUDA-CUPTI and HIP-ROCTracer,
+Python, and energy) into LTTng-UST/CTF traces with very low overhead; PEAM
+turns those traces into performance insight — scriptable analyses, reports,
+and interactive TraceCompass visualization — for single-process runs up to
+multi-node MPI+GPU jobs.
 
-#### Per-thread per-region
+## What's here
 
-On a trace that had 32 threads:
+| Path | Contents |
+|---|---|
+| `src/python/` | **Python analysis toolkit** (the main entry point — see its [README](src/python/README.md)) |
+| `src/python/tc/` | TraceCompass GUI integration for the toolkit (run the analyses from TC menus) |
+| `src/tracecompass/` | TraceCompass **XML data-driven analyses** (timeline/state views) |
+| `experiment/`, `docs/` | exploratory prototypes and presentation material (not maintained) |
 
-    python3 python/per_thread_per_region.py /tmp/ompt-jacobi/ 32 > per-region.csv
+## Python analysis toolkit (`src/python/`)
 
-To run event processing in parallel, use the `-j <NUM_PROCESSES>` flag:
+Tool-independent command-line analyses over PInsight CTF traces. Requires
+`python3` and [`babeltrace2`](https://babeltrace.org) on `PATH`.
 
-    python3 python/per_thread_per_region.py -j 8 /tmp/ompt-jacobi/ 32 > per-region.csv
+Current analyses (multi-node aware — pass a whole run folder, or any mix of
+trace/parent folders):
 
-#### Whole-program per-thread
+- **`load_imbalance.py`** — per-rank wall/wait/work breakdown; which ranks
+  wait, and the likely straggler they wait for.
+- **`mpi_latency.py`** — MPI call-duration distributions (mean/p50/p95/p99)
+  per call type, same-node vs cross-node, and by message size.
+- **`gpu_datamovement.py`** — host↔device copy cost: direction/bytes/host
+  time from HIP host events, true GPU copy time and bandwidth from activity
+  records.
+- **`halo_exchange.py`** — point-to-point (halo) vs collective cost split,
+  neighbor topology, message-size profile (latency- vs bandwidth-bound).
+- **`mpi_gpu_energy_report.py`** — combined per-rank MPI/GPU/energy report
+  with figures and GPU-kernel hotspots.
 
-On a trace that had 32 threads:
+```bash
+# whole 4-node run (a run folder expands to all per-node traces beneath it):
+python3 src/python/load_imbalance.py /path/to/run_folder
 
-    python3 python/per_thread.py /tmp/ompt-jacobi/ 32 > per-thread.csv
+# machine-readable output for scripts/spreadsheets:
+python3 src/python/mpi_latency.py --json /path/to/run_folder
+python3 src/python/halo_exchange.py --csv  /path/to/run_folder
+```
 
-To run event processing in parallel, use the `-j <NUM_PROCESSES>` flag:
+Output formats: human-readable text (default), `--json`, `--csv` — all
+driven by a per-script declarative table contract, so every analysis gets
+all formats (and the TraceCompass integration below) automatically. Details
+and conventions for adding new analyses: [`src/python/README.md`](src/python/README.md).
 
-    python3 python/per_thread.py -j 8 /tmp/ompt-jacobi/ 32 > per-region.csv
+## TraceCompass integration
 
-### Eclipse Trace Compass and Data-Driven Analysis
-Eclipse Trace Compass can be used to view, analyze and visualize the PInsight traces. See below the screen shot for LULESH tracing and visualization with Tracecompass.
-The visualization was created in Trace Compass using [Data driven analysis](
- http://archive.eclipse.org/tracecompass/doc/stable/org.eclipse.tracecompass.doc.user/Data-driven-analysis.html#Data_driven_analysis). To generate visualizations like this yourself, look at the `tracecompass/` folder in this repository.
+Two complementary mechanisms:
 
- ![Lulesh tracing and visualization with Tracecompass](docs/OMPT_LTTng_TraceCompass.png). 
+1. **XML data-driven analyses** (`src/tracecompass/`) — import
+   `pinsight_analysis.xml` via TraceCompass's *Manage XML analyses…* to get
+   a unified cross-domain timeline (OpenMP threads/teams/regions, CUDA and
+   HIP devices/kernels, MPI per-rank states) over any PInsight trace, batch
+   or live. `pinsight_omp_pattern_analysis.xml` adds OpenMP parallel-region
+   segment statistics.
 
--------------------------------------
+2. **Run the Python analyses from the TC GUI** (`src/python/tc/`) — register
+   the committed `tc/lami_<analysis>.sh` wrappers as TraceCompass *External
+   Analyses*; results render as native report tables (and charts), honoring
+   the GUI's time-range selection and working on traces or experiments.
+   Setup (three machine-local paths) in
+   [`src/python/README.md`](src/python/README.md).
 
-### Analyses considered
+![LULESH traced by PInsight, visualized in TraceCompass](docs/OMPT_LTTng_TraceCompass.png)
 
- 1. Overhead analysis.
- 1. Load balancing analysis.
- 1. Offline analysis for configuring power usage and frequency (perhaps binary-based?).
+## Typical workflow
 
-### For enabling callstack based tracing and flamegraph
- 1. https://archive.eclipse.org/tracecompass/doc/stable/org.eclipse.tracecompass.doc.user/LTTng-UST-Analyses.html
+1. Trace your application with PInsight (see the
+   [PInsight repo](https://github.com/passlab/pinsight); for MPI jobs, one
+   LTTng session per node writing to a shared filesystem, one trace dir per
+   node).
+2. Skim interactively: open the trace(s)/experiment in TraceCompass with
+   the XML analyses for the timeline view.
+3. Quantify: run the Python analyses — from the shell for reports/automation
+   (`--json`/`--csv`), or from TraceCompass's External Analyses menu for
+   in-GUI tables scoped to a selected time range.
