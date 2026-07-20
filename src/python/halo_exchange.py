@@ -25,7 +25,7 @@ POST = {"MPI_Isend":"dest","MPI_Irecv":"source","MPI_Send":"dest","MPI_Recv":"so
 WAIT = {"MPI_Wait","MPI_Waitall"}
 COLL = {"MPI_Allreduce","MPI_Barrier","MPI_Allgather"}
 
-def main(dirs):
+def collect(dirs, b_tod=None, e_tod=None):
     m = BeginEndMatcher()
     host_of = {}
     t_post = defaultdict(float); t_wait = defaultdict(float); t_coll = defaultdict(float)
@@ -33,10 +33,15 @@ def main(dirs):
     peer_msgs  = defaultdict(int)      # (rank, peer) -> messages
     peer_count = defaultdict(int)      # (rank, peer) -> total MPI-element count
     sizes = []                          # per-message element counts (halo only)
+    t0 = None; t1 = 0
 
     for ev in events(dirs):
+        if b_tod is not None and ev.t_ns < b_tod: continue
+        if e_tod is not None and ev.t_ns > e_tod: continue
         r = ev.i("mpirank")
         if r is None or ev.provider != "pmpi": continue
+        if t0 is None: t0 = ev.t_ns
+        t1 = ev.t_ns
         if ev.host: host_of[r] = ev.host
         got = m.add(ev, r)
         if not got: continue
@@ -56,6 +61,12 @@ def main(dirs):
             t_coll[r] += s
             n_coll[r][base] += 1
 
+    return (host_of, t_post, t_wait, t_coll, peer_msgs, peer_count, sizes,
+            (t0 or 0, t1))
+
+def main(dirs):
+    (host_of, t_post, t_wait, t_coll, peer_msgs, peer_count, sizes,
+     _span) = collect(dirs)
     ranks = sorted(set(t_post)|set(t_wait)|set(t_coll))
     print("== halo (P2P) vs collective time per rank (s) ==")
     print(f"{'rank':>4} {'host':>14} {'p2p post':>9} {'wait*':>9} {'halo=p+w':>9} "
@@ -90,7 +101,38 @@ def main(dirs):
               f"{100*vol_small/sum(v):.1f}% of volume)"
               f"  -> {'LATENCY-bound tail dominates' if small/len(v)>0.5 else 'bandwidth-dominated'}")
 
+# neutral table contract (see pinsight_reader.py: --json/--csv + adapters)
+TITLE = "PInsight: halo exchange vs collectives"
+DESCRIPTION = ("Per-rank halo (P2P post+wait) vs collective MPI cost, and "
+               "heaviest neighbor pairs")
+TABLE_SPECS = {
+    "halo_per_rank": {"title": "Halo vs collective time per rank", "columns": [
+        ("rank","int"), ("host","string"), ("p2p_post_s","duration_s"),
+        ("wait_s","duration_s"), ("halo_s","duration_s"),
+        ("collectives_s","duration_s"), ("neighbors","int")]},
+    "halo_pairs": {"title": "Heaviest neighbor pairs", "columns": [
+        ("rank","int"), ("peer","int"), ("link","string"),
+        ("messages","int"), ("elements","int")]},
+}
+
+def build_tables(dirs, b_tod=None, e_tod=None):
+    (host_of, t_post, t_wait, t_coll, peer_msgs, peer_count, sizes,
+     span) = collect(dirs, b_tod, e_tod)
+    ranks = sorted(set(t_post)|set(t_wait)|set(t_coll))
+    rrows = []
+    for r in ranks:
+        nb = len({p for (rr,p) in peer_msgs if rr==r})
+        rrows.append([r, host_of.get(r,"?"), t_post[r], t_wait[r],
+                      t_post[r]+t_wait[r], t_coll[r], nb])
+    prows = []
+    for (r,p), n in sorted(peer_msgs.items(), key=lambda kv: -kv[1])[:16]:
+        h1,h2 = host_of.get(r), host_of.get(p)
+        link = "same-node" if h1 and h1==h2 else "cross-node" if h1 and h2 else "?"
+        prows.append([r, p, link, n, peer_count[(r,p)]])
+    return {"halo_per_rank": rrows, "halo_pairs": prows}, span
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__ or "usage: halo_exchange.py <trace_dir>..."); sys.exit(1)
-    main(sys.argv[1:])
+    from pinsight_reader import cli_main
+    sys.exit(cli_main(sys.argv[1:], "halo_exchange", TABLE_SPECS, build_tables,
+                      main,
+                      "usage: halo_exchange.py [--json|--csv] <trace_or_folder>..."))

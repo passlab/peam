@@ -74,6 +74,99 @@ class BeginEndMatcher:
                 return base, ev.t_ns - b.t_ns, b
         return None
 
+def find_traces(path):
+    """A CTF trace dir is one containing a `metadata` file. If `path` is
+    itself a trace dir, return just it; otherwise return every trace dir
+    beneath it (so a run folder expands to all of its per-node traces)."""
+    import os
+    if os.path.isfile(os.path.join(path, "metadata")):
+        return [path]
+    out = []
+    for root, subdirs, files in os.walk(path):
+        if "metadata" in files:
+            out.append(root)
+            subdirs[:] = []          # a trace dir has no nested traces
+    return sorted(out)
+
+def expand_dirs(paths):
+    """Expand each argument to CTF trace dirs (see find_traces), warn about
+    and skip non-directories, and deduplicate while preserving order. This is
+    the standard argument semantic for all the analysis scripts: pass exact
+    trace dirs, node folders, run folders, or any mix."""
+    import os
+    out = []
+    for d in paths:
+        if os.path.isdir(d):
+            traces = find_traces(d)
+            if traces:
+                out.extend(traces)
+            else:
+                print(f"[pinsight] no CTF trace (metadata file) under '{d}'",
+                      file=sys.stderr)
+        else:
+            print(f"[pinsight] skipping '{d}': not a directory",
+                  file=sys.stderr)
+    seen = set(); uniq = []
+    for d in out:
+        if d not in seen:
+            seen.add(d); uniq.append(d)
+    return uniq
+
+# ---------------- neutral machine-readable output (--json / --csv) --------
+# Every analysis script declares TABLE SPECS: an ordered dict
+#   {table_name: {"title": str, "columns": [(col_name, col_type), ...]}}
+# with col_type in: int | string | number | duration_s | ratio | bytes.
+# Rows carry PLAIN values in natural units (seconds as float, bytes as int,
+# ratio as 0..1 float). Tool adapters (e.g. tc/lami_adapter.py) convert from
+# this one contract; --json/--csv emit it directly.
+
+def emit_json(analysis, specs, tables_rows, span):
+    import json
+    out = {"analysis": analysis, "span_ns": list(span), "tables": []}
+    for name, spec in specs.items():
+        out["tables"].append({
+            "name": name, "title": spec["title"],
+            "columns": [{"name": n, "type": t} for n, t in spec["columns"]],
+            "rows": tables_rows.get(name, [])})
+    print(json.dumps(out, indent=2))
+
+def emit_csv(specs, tables_rows):
+    import csv
+    w = csv.writer(sys.stdout)
+    multi = len(specs) > 1
+    for name, spec in specs.items():
+        if multi: print(f"# table: {name}")
+        w.writerow([n for n, _ in spec["columns"]])
+        for r in tables_rows.get(name, []):
+            w.writerow(r)
+        if multi: print()
+
+def cli_main(argv, analysis, specs, build_tables, text_fn, usage):
+    """Standard CLI for the analysis scripts: paths (dirs expand to all CTF
+    traces beneath), --json, --csv; default = human-readable text.
+    build_tables(dirs) -> ({table_name: rows}, (t0_ns, t1_ns))."""
+    mode = "text"; paths = []
+    for a in argv:
+        if a == "--json":   mode = "json"
+        elif a == "--csv":  mode = "csv"
+        elif a.startswith("--"):
+            print(f"unknown option {a}\n{usage}", file=sys.stderr); return 1
+        else:
+            paths.append(a)
+    if not paths:
+        print(usage); return 1
+    dirs = expand_dirs(paths)
+    if not dirs:
+        return 1
+    if mode == "text":
+        text_fn(dirs); return 0
+    tables_rows, span = build_tables(dirs)
+    if mode == "json":
+        emit_json(analysis, specs, tables_rows, span)
+    else:
+        emit_csv(specs, tables_rows)
+    return 0
+
 def fmt_bytes(n):
     for unit in ("B","KB","MB","GB","TB"):
         if n < 1024 or unit == "TB": return f"{n:.1f} {unit}" if unit!="B" else f"{n} B"

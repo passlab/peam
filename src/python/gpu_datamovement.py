@@ -22,13 +22,18 @@ import sys
 from collections import defaultdict
 from pinsight_reader import events, BeginEndMatcher, fmt_bytes, percentile
 
-def main(dirs):
+def collect(dirs, b_tod=None, e_tod=None):
     m = BeginEndMatcher()
     host = defaultdict(lambda: dict(n=0, bytes=0, host_ns=0, durs=[]))  # [(call,kind)]
     per_rank = defaultdict(lambda: defaultdict(float))                  # [rank][(call,kind)] s
     act  = defaultdict(lambda: dict(n=0, bytes=0, gpu_ns=0))            # [devId]
+    t0 = None; t1 = 0
     for ev in events(dirs):
+        if b_tod is not None and ev.t_ns < b_tod: continue
+        if e_tod is not None and ev.t_ns > e_tod: continue
         if ev.provider != "roctracer": continue
+        if t0 is None: t0 = ev.t_ns
+        t1 = ev.t_ns
         if ev.name == "hipMemcpyActivity":
             d = ev.i("devId")
             a = act[d]
@@ -50,7 +55,10 @@ def main(dirs):
         h["n"] += 1; h["bytes"] += b.i("count",0); h["host_ns"] += dns
         h["durs"].append(dns/1e3)
         per_rank[r][key] += dns/1e9
+    return host, per_rank, act, (t0 or 0, t1)
 
+def main(dirs):
+    host, per_rank, act, _span = collect(dirs)
     print("== host-side copy calls (direction from hipMemcpyKind; host time in call) ==")
     print(f"{'call':>16} {'direction':>24} {'n':>8} {'bytes':>10} {'host s':>8} "
           f"{'mean us':>8} {'p99 us':>8}")
@@ -73,7 +81,36 @@ def main(dirs):
         bw = (a["bytes"]/1e9)/(a["gpu_ns"]/1e9) if a["gpu_ns"] else 0
         print(f"{d:>6} {a['n']:>8} {fmt_bytes(a['bytes']):>12} {a['gpu_ns']/1e9:>8.3f} {bw:>9.2f}")
 
+# neutral table contract (see pinsight_reader.py: --json/--csv + adapters)
+TITLE = "PInsight: GPU data movement"
+DESCRIPTION = ("Host<->device copy cost: host-side copy calls by direction, "
+               "and device-side copy activity")
+TABLE_SPECS = {
+    "host_copies": {"title": "Host-side copy calls", "columns": [
+        ("call","string"), ("direction","string"), ("n","int"),
+        ("bytes","bytes"), ("host_time_s","duration_s"),
+        ("mean_s","duration_s"), ("p99_s","duration_s")]},
+    "device_copies": {"title": "Device-side copy activity", "columns": [
+        ("device","int"), ("n","int"), ("bytes","bytes"),
+        ("gpu_time_s","duration_s"), ("gb_per_s","number")]},
+}
+
+def build_tables(dirs, b_tod=None, e_tod=None):
+    host, per_rank, act, span = collect(dirs, b_tod, e_tod)
+    hrows = []
+    for key in sorted(host):
+        h = host[key]; v = sorted(h["durs"])
+        hrows.append([key[0], key[1], h["n"], h["bytes"], h["host_ns"]/1e9,
+                      sum(v)/len(v)/1e6, percentile(v,99)/1e6])
+    drows = []
+    for d in sorted(act):
+        a = act[d]
+        bw = (a["bytes"]/1e9)/(a["gpu_ns"]/1e9) if a["gpu_ns"] else 0
+        drows.append([d, a["n"], a["bytes"], a["gpu_ns"]/1e9, round(bw, 2)])
+    return {"host_copies": hrows, "device_copies": drows}, span
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__ or "usage: gpu_datamovement.py <trace_dir>..."); sys.exit(1)
-    main(sys.argv[1:])
+    from pinsight_reader import cli_main
+    sys.exit(cli_main(sys.argv[1:], "gpu_datamovement", TABLE_SPECS,
+                      build_tables, main,
+                      "usage: gpu_datamovement.py [--json|--csv] <trace_or_folder>..."))

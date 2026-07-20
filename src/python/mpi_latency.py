@@ -39,17 +39,22 @@ def dist_row(name, vals_us):
             f"{percentile(v,95):>9.2f} {percentile(v,99):>9.2f} {v[-1]:>10.2f} "
             f"{sum(v)/1e6:>9.3f}")
 
-def main(dirs):
+def collect(dirs, b_tod=None, e_tod=None):
     m = BeginEndMatcher()
     host_of = {}                      # rank -> hostname (learned)
     by_call  = defaultdict(list)      # call -> [dur_us]
     by_local = defaultdict(list)      # (call, "same-node"/"cross-node") -> [dur_us]
     by_size  = defaultdict(list)      # (call, size_bucket) -> [dur_us]
     pending = []                      # (call, dur_us, peer_rank, count) until host map complete
+    t0 = None; t1 = 0
 
     for ev in events(dirs):
+        if b_tod is not None and ev.t_ns < b_tod: continue
+        if e_tod is not None and ev.t_ns > e_tod: continue
         r = ev.i("mpirank")
         if r is None or ev.provider != "pmpi": continue
+        if t0 is None: t0 = ev.t_ns
+        t1 = ev.t_ns
         if ev.host: host_of[r] = ev.host
         got = m.add(ev, r)
         if not got: continue
@@ -69,6 +74,10 @@ def main(dirs):
         loc = "same-node" if (h1 and h2 and h1==h2) else ("cross-node" if h1 and h2 else "?")
         by_local[(base, loc)].append(us)
 
+    return by_call, by_local, by_size, (t0 or 0, t1)
+
+def main(dirs):
+    by_call, by_local, by_size, _span = collect(dirs)
     hdr = (f"{'call':>28} {'n':>8} {'mean us':>9} {'p50 us':>9} {'p95 us':>9} "
            f"{'p99 us':>9} {'max us':>10} {'total s':>9}")
     print("== per call type =="); print(hdr)
@@ -84,7 +93,35 @@ def main(dirs):
     for k in sorted(by_size, key=lambda k:(k[0],order.get(k[1],9))):
         print(dist_row(f"{k[0]} [{k[1]}]", by_size[k]))
 
+# neutral table contract (see pinsight_reader.py: --json/--csv + adapters)
+TITLE = "PInsight: MPI call latency"
+DESCRIPTION = ("Host-side MPI call duration distributions per call type, "
+               "locality and message size")
+TABLE_SPECS = {
+    "mpi_latency": {"title": "MPI call latency distributions", "columns": [
+        ("call","string"), ("scope","string"), ("n","int"),
+        ("mean_s","duration_s"), ("p50_s","duration_s"),
+        ("p95_s","duration_s"), ("p99_s","duration_s"),
+        ("max_s","duration_s"), ("total_s","duration_s")]},
+}
+
+def _dist_vals(call, scope, vals_us):
+    v = sorted(vals_us)
+    s = lambda x: x/1e6   # us -> s
+    return [call, scope, len(v), s(sum(v)/len(v)), s(percentile(v,50)),
+            s(percentile(v,95)), s(percentile(v,99)), s(v[-1]), sum(v)/1e6]
+
+def build_tables(dirs, b_tod=None, e_tod=None):
+    by_call, by_local, by_size, span = collect(dirs, b_tod, e_tod)
+    order = {"<=8":0,"<=64":1,"<=512":2,"<=4K":3,"<=32K":4,">32K":5,"?":6}
+    rows = [_dist_vals(c, "all", by_call[c]) for c in sorted(by_call)]
+    rows += [_dist_vals(k[0], k[1], by_local[k]) for k in sorted(by_local)]
+    rows += [_dist_vals(k[0], f"size {k[1]}", by_size[k])
+             for k in sorted(by_size, key=lambda k:(k[0],order.get(k[1],9)))]
+    return {"mpi_latency": rows}, span
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__ or "usage: mpi_latency.py <trace_dir>..."); sys.exit(1)
-    main(sys.argv[1:])
+    from pinsight_reader import cli_main
+    sys.exit(cli_main(sys.argv[1:], "mpi_latency", TABLE_SPECS, build_tables,
+                      main,
+                      "usage: mpi_latency.py [--json|--csv] <trace_or_folder>..."))
