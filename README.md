@@ -12,12 +12,11 @@ multi-node MPI+GPU jobs.
 
 | Path | Contents |
 |---|---|
-| `src/python/` | **Python analysis toolkit** (the main entry point — see its [README](src/python/README.md)) |
-| `src/python/tc/` | TraceCompass GUI integration for the toolkit (run the analyses from TC menus) |
-| `src/tracecompass/` | TraceCompass **XML data-driven analyses** (timeline/state views) |
+| `src/` | **Python analysis toolkit** (the main entry point — see its [README](src/README.md)) |
+| `src/tc/` | all TraceCompass integration: run the Python analyses from TC menus, plus the **XML data-driven analyses** (timeline/state views) |
 | `experiment/`, `docs/` | exploratory prototypes and presentation material (not maintained) |
 
-## Python analysis toolkit (`src/python/`)
+## Python analysis toolkit (`src/`)
 
 Tool-independent command-line analyses over PInsight CTF traces. Requires
 `python3` and [`babeltrace2`](https://babeltrace.org) on `PATH`.
@@ -39,35 +38,35 @@ trace/parent folders):
 
 ```bash
 # whole 4-node run (a run folder expands to all per-node traces beneath it):
-python3 src/python/load_imbalance.py /path/to/run_folder
+python3 src/load_imbalance.py /path/to/run_folder
 
 # machine-readable output for scripts/spreadsheets:
-python3 src/python/mpi_latency.py --json /path/to/run_folder
-python3 src/python/halo_exchange.py --csv  /path/to/run_folder
+python3 src/mpi_latency.py --json /path/to/run_folder
+python3 src/halo_exchange.py --csv  /path/to/run_folder
 ```
 
 Output formats: human-readable text (default), `--json`, `--csv` — all
 driven by a per-script declarative table contract, so every analysis gets
 all formats (and the TraceCompass integration below) automatically. Details
-and conventions for adding new analyses: [`src/python/README.md`](src/python/README.md).
+and conventions for adding new analyses: [`src/README.md`](src/README.md).
 
 ## TraceCompass integration
 
 Two complementary mechanisms:
 
-1. **XML data-driven analyses** (`src/tracecompass/`) — import
+1. **XML data-driven analyses** (`src/tc/*.xml`) — import
    `pinsight_analysis.xml` via TraceCompass's *Manage XML analyses…* to get
    a unified cross-domain timeline (OpenMP threads/teams/regions, CUDA and
    HIP devices/kernels, MPI per-rank states) over any PInsight trace, batch
    or live. `pinsight_omp_pattern_analysis.xml` adds OpenMP parallel-region
    segment statistics.
 
-2. **Run the Python analyses from the TC GUI** (`src/python/tc/`) — register
+2. **Run the Python analyses from the TC GUI** (`src/tc/`) — register
    the committed `tc/lami_<analysis>.sh` wrappers as TraceCompass *External
    Analyses*; results render as native report tables (and charts), honoring
    the GUI's time-range selection and working on traces or experiments.
    Setup (three machine-local paths) in
-   [`src/python/README.md`](src/python/README.md).
+   [`src/README.md`](src/README.md).
 
 ![LULESH traced by PInsight, visualized in TraceCompass](docs/OMPT_LTTng_TraceCompass.png)
 

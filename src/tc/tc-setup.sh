@@ -14,7 +14,7 @@
 #      per analysis under
 #      .metadata/.plugins/org.eclipse.tracecompass.analysis.lami.core/user-defined-configs/
 #      pointing at the committed lami_<analysis>.sh wrappers in this folder.
-#   2. XML data-driven analyses — copies src/tracecompass/*.xml into
+#   2. XML data-driven analyses — copies this folder's *.xml into
 #      .metadata/.plugins/org.eclipse.tracecompass.tmf.analysis.xml.core/xml_files/
 #
 # Idempotent: existing PEAM entries/files are overwritten with current ones.
@@ -57,16 +57,13 @@ register gpu_datamovement "PInsight GPU data movement"
 register halo_exchange    "PInsight halo exchange"
 
 # ---- 2. XML data-driven analyses -----------------------------------------
-XML_SRC="$(cd "$TC_HERE/../../tracecompass" 2>/dev/null && pwd)"
-if [ -n "$XML_SRC" ] && [ -d "$XML_SRC" ]; then
-  for x in "$XML_SRC"/*.xml; do
-    [ -f "$x" ] || continue
-    cp "$x" "$XML_DIR/"
-    echo "installed XML analysis: $(basename "$x")"
-  done
-else
-  echo "skip: XML source folder not found (expected src/tracecompass next to src/python)" >&2
-fi
+# The XML analyses live in this same folder (src/tc/) since the 2026-07-20
+# restructure.
+for x in "$TC_HERE"/*.xml; do
+  [ -f "$x" ] || continue
+  cp "$x" "$XML_DIR/"
+  echo "installed XML analysis: $(basename "$x")"
+done
 
 echo
 echo "Done. Start TraceCompass; the analyses appear under External Analyses"

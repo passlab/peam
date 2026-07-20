@@ -22,11 +22,14 @@
 # PREFERRED: set them in tc-local.conf next to this file instead (gitignored
 # plain shell, same three variable names) — that survives git updates and
 # keeps machine paths out of the repo. tc-local.conf wins over these lines.
-PYTHON3=""          # python3 executable      (empty: first python3 on PATH)
-BABELTRACE2_DIR=""  # dir containing babeltrace2
-                    #                (empty: homebrew locations are probed)
-TC_WORKSPACE=""     # Eclipse workspace shown in TC's title bar
-                    #                (empty: ~/eclipse-workspace)
+PYTHON3="${PYTHON3:-}"                  # python3 executable
+                                        #   (empty: first python3 on PATH)
+BABELTRACE2_DIR="${BABELTRACE2_DIR:-}"  # dir containing babeltrace2
+                                        #   (empty: homebrew locations probed)
+TC_WORKSPACE="${TC_WORKSPACE:-}"        # Eclipse workspace (TC title bar)
+                                        #   (empty: ~/eclipse-workspace)
+# (the ${VAR:-} form also lets environment variables supply values;
+#  precedence: tc-local.conf > these lines/environment > built-in default)
 # ==========================================================================
 
 TC_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

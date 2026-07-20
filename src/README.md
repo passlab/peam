@@ -92,7 +92,7 @@ Setup on the analysis machine (needs python3 + babeltrace2 + this whole
 folder including `tc/`):
 0. **One-shot automated setup:** with TraceCompass CLOSED, run
    `tc/tc-setup.sh` — it registers all four external analyses AND installs
-   the `src/tracecompass/*.xml` data-driven analyses directly into the
+   the `src/tc/*.xml` data-driven analyses directly into the
    workspace metadata (locations confirmed against TC source: LAMI
    `.properties` under `...analysis.lami.core/user-defined-configs/`, XML
    files under `...tmf.analysis.xml.core/xml_files/`). Idempotent — re-run
