@@ -90,6 +90,14 @@ per-analysis entry points `lami_<name>.sh`.
 
 Setup on the analysis machine (needs python3 + babeltrace2 + this whole
 folder including `tc/`):
+0. **One-shot automated setup:** with TraceCompass CLOSED, run
+   `tc/tc-setup.sh` — it registers all four external analyses AND installs
+   the `src/tracecompass/*.xml` data-driven analyses directly into the
+   workspace metadata (locations confirmed against TC source: LAMI
+   `.properties` under `...analysis.lami.core/user-defined-configs/`, XML
+   files under `...tmf.analysis.xml.core/xml_files/`). Idempotent — re-run
+   after `git pull` or a folder move. Manual per-entry steps below are the
+   fallback/reference.
 1. Point each TC external-analysis command at the committed wrapper's
    absolute path, e.g. `<here>/tc/lami_load_imbalance.sh` — no per-machine
    generation or editing. Wrappers are needed because TC treats the command
