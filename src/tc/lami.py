@@ -69,6 +69,18 @@ def results(tables_rows, span, begin_epoch_ns=None, end_epoch_ns=None):
     return {"results": [{"time-range": tr, "class": cid, "data": rows}
                         for cid, rows in tables_rows]}
 
+def is_pinsight_trace(trace_dir):
+    """True if the CTF trace dir contains PInsight events — determined by
+    scanning the trace's `metadata` (TSDL, which names all event providers)
+    for the `_pinsight_lttng_ust` provider suffix. Works on plain-text and
+    packetized metadata alike (binary-safe substring search)."""
+    import os
+    try:
+        with open(os.path.join(trace_dir, "metadata"), "rb") as f:
+            return b"pinsight_lttng_ust" in f.read()
+    except OSError:
+        return False
+
 def run(argv, meta, analyze_lami, main_text, usage):
     """Standard CLI for a LAMI-capable analysis script.
     meta: the metadata() dict.
@@ -93,8 +105,14 @@ def run(argv, meta, analyze_lami, main_text, usage):
         i += 1
     dirs = expand_dirs(dirs)
     if test_compat:
-        import os
-        return 0 if dirs and all(os.path.isdir(d) for d in dirs) else 1
+        # TC calls `--test-compatibility <trace>` PER TRACE at selection time
+        # (LamiAnalysis.canExecute) — this is how a workspace-globally
+        # registered external analysis gets scoped to applicable traces.
+        # Applicable = a PInsight trace: the CTF `metadata` file is TSDL text
+        # naming every event provider, so scan it for pinsight providers
+        # (cheap; no event decoding). Non-PInsight CTF/LTTng traces -> exit 1
+        # -> TC greys the entry out for them.
+        return 0 if dirs and all(is_pinsight_trace(d) for d in dirs) else 1
     if not dirs:
         print(usage); return 1
     if lami:
