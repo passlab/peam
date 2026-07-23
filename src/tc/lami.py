@@ -87,7 +87,7 @@ def run(argv, meta, analyze_lami, main_text, usage):
     analyze_lami(dirs, begin_tod_ns, end_tod_ns) -> (tables_rows, span)
     main_text(dirs) -> None  (original human-readable mode)
     """
-    lami = False; begin = None; end = None; test_compat = False; dirs = []
+    lami = False; begin = None; end = None; test_compat = False; raw = []
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -101,18 +101,47 @@ def run(argv, meta, analyze_lami, main_text, usage):
         elif a == "--end":   i += 1; end = int(argv[i])
         elif a == "--output-progress": pass   # progress not implemented
         elif a.startswith("--"): pass         # tolerate unknown TC flags
-        else: dirs.append(a)
+        else: raw.append(a)
         i += 1
-    dirs = expand_dirs(dirs)
+
     if test_compat:
-        # TC calls `--test-compatibility <trace>` PER TRACE at selection time
-        # (LamiAnalysis.canExecute) — this is how a workspace-globally
-        # registered external analysis gets scoped to applicable traces.
-        # Applicable = a PInsight trace: the CTF `metadata` file is TSDL text
-        # naming every event provider, so scan it for pinsight providers
-        # (cheap; no event decoding). Non-PInsight CTF/LTTng traces -> exit 1
-        # -> TC greys the entry out for them.
-        return 0 if dirs and all(is_pinsight_trace(d) for d in dirs) else 1
+        # TC calls `--test-compatibility <trace.getPath()>` per trace at
+        # selection/display time (LamiAnalysis.testCompatibility) to decide
+        # whether to grey the analysis out for that trace.
+        #
+        # CRITICAL, verified from the TC 10.2 jar (LamiAnalysis +
+        # common.core ProcessUtils): TC *ignores this command's exit code*.
+        # It captures stdout with STDERR MERGED IN (ProcessBuilder
+        # redirectErrorStream(true)) and rules:
+        #     empty output                       -> compatible
+        #     valid JSON without "error-message" -> compatible
+        #     anything else (a stray stderr line,
+        #        non-JSON text, or JSON w/ error) -> INCOMPATIBLE (struck out)
+        # So we must be completely SILENT (no stdout AND no stderr) when
+        # compatible, and print a JSON {"error-message": ...} when not.
+        # expand_dirs() writes warnings to stderr for non-dir arguments;
+        # under the merged stream those read as non-JSON and would falsely
+        # mark a trace incompatible, so we silence it here.
+        import io, contextlib
+        with contextlib.redirect_stderr(io.StringIO()):
+            traces = expand_dirs(raw)
+        if traces and all(is_pinsight_trace(d) for d in traces):
+            return 0                          # compatible: emit nothing
+        if not traces and any(not os.path.isdir(d) for d in raw):
+            # A non-directory argument we could not expand — typically a TC
+            # EXPERIMENT name the wrapper did not resolve to member folders.
+            # We cannot inspect it here, so stay lenient (compatible) rather
+            # than silently greying every experiment out; the genuine
+            # per-trace check still happens when the analysis is run.
+            return 0
+        # A real directory that is not a PInsight trace (e.g. a kernel or
+        # other CTF/LTTng trace): report incompatible the way TC reads it.
+        print(json.dumps({"error-message":
+              "not a PInsight trace: no pinsight_lttng_ust provider in the "
+              "trace metadata"}))
+        return 0                              # exit code is irrelevant to TC
+
+    dirs = expand_dirs(raw)
     if not dirs:
         print(usage); return 1
     if lami:

@@ -10,8 +10,9 @@
 #   - Experiment-name resolution: running a TC external analysis on an
 #     EXPERIMENT passes the experiment's NAME as the LAST argument (TC's
 #     argument order: progress flag, --begin/--end, extra params, trace path
-#     last). Resolved here to the member trace folders by parsing the
-#     Eclipse workspace tracing projects' .project linked resources.
+#     last). Resolved here to the member trace folders by mapping the
+#     experiment's shadow tree under <project>/Experiments/<name>/ back to the
+#     real CTF traces under <project>/Traces/ (see the Python block below).
 #   - exec of the generic LAMI adapter (lami_adapter.py) with the analysis
 #     module name supplied by the calling wrapper.
 #
@@ -62,25 +63,31 @@ run_lami_analysis() {
           while IFS= read -r line; do
             [ -n "$line" ] && resolved+=("$line")
           done < <(EXP_NAME="$last" TC_WS="$TC_WORKSPACE" "$PYTHON3" - <<'PY'
-import os, re, glob
-from urllib.parse import urlparse, unquote
+import os, glob
+# Resolve a TraceCompass EXPERIMENT name to its member CTF trace dirs.
+# TMF stores an experiment's membership as a SHADOW directory tree under
+# <project>/Experiments/<name>/ that reproduces, relative to that folder, the
+# path of each member trace under <project>/Traces/ (the leaf is a 0-byte
+# marker whose name is the trace, e.g. .../64-bit). So we map every node of
+# the shadow tree back to <project>/Traces/<relpath> and keep the ones that
+# are real CTF traces (contain a `metadata` file). Robust to how TMF renders
+# the leaf (0-byte file, dir, or link); needs no `.project` parsing (that file
+# only records lazily-created .bookmarks, NOT experiment membership).
 name = os.environ["EXP_NAME"]
 ws = os.path.expanduser(os.environ["TC_WS"])
-dirs = set()
-for proj in glob.glob(os.path.join(ws, "*", ".project")):
-    try:
-        txt = open(proj).read()
-    except OSError:
+found = set()
+for proj in glob.glob(os.path.join(ws, "*")):
+    exp = os.path.join(proj, "Experiments", name)
+    traces = os.path.join(proj, "Traces")
+    if not os.path.isdir(exp) or not os.path.isdir(traces):
         continue
-    pat = (r"<link>\s*<name>Experiments/" + re.escape(name) +
-           r"/[^<]*</name>.*?<location(URI)?>([^<]+)</location(?:URI)?>")
-    for m in re.finditer(pat, txt, re.S):
-        loc = m.group(2)
-        if loc.startswith("file:"):
-            loc = unquote(urlparse(loc).path)
-        if os.path.isdir(loc):
-            dirs.add(loc)
-for d in sorted(dirs):
+    for root, subdirs, files in os.walk(exp):
+        for entry in files + subdirs:
+            rel = os.path.relpath(os.path.join(root, entry), exp)
+            real = os.path.join(traces, rel)
+            if os.path.isfile(os.path.join(real, "metadata")):
+                found.add(real)
+for d in sorted(found):
     print(d)
 PY
 )
