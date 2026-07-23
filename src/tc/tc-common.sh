@@ -57,40 +57,21 @@ run_lami_analysis() {
       --*) : ;;   # handshake invocations (--mi-version/--metadata): pass through
       *)
         if [ ! -d "$last" ]; then
-          # Not a path -> assume TC experiment name; resolve member locations.
+          # Not a path -> assume TC experiment name; resolve member locations
+          # via the shadow tree under <project>/Experiments/<name>/ (see
+          # resolve_experiment.py). A separate script, NOT a heredoc: bash 3.2
+          # (macOS default) cannot parse a heredoc inside <(...) process
+          # substitution, and its parse error on stderr would be merged into
+          # the analysis output by TC (striking the analysis out). Resolver
+          # stderr is discarded for the same reason.
+          local resolved_out
+          resolved_out=$("$PYTHON3" "$TC_HERE/resolve_experiment.py" \
+                           "$TC_WORKSPACE" "$last" 2>/dev/null)
           local resolved=()
           local line
           while IFS= read -r line; do
             [ -n "$line" ] && resolved+=("$line")
-          done < <(EXP_NAME="$last" TC_WS="$TC_WORKSPACE" "$PYTHON3" - <<'PY'
-import os, glob
-# Resolve a TraceCompass EXPERIMENT name to its member CTF trace dirs.
-# TMF stores an experiment's membership as a SHADOW directory tree under
-# <project>/Experiments/<name>/ that reproduces, relative to that folder, the
-# path of each member trace under <project>/Traces/ (the leaf is a 0-byte
-# marker whose name is the trace, e.g. .../64-bit). So we map every node of
-# the shadow tree back to <project>/Traces/<relpath> and keep the ones that
-# are real CTF traces (contain a `metadata` file). Robust to how TMF renders
-# the leaf (0-byte file, dir, or link); needs no `.project` parsing (that file
-# only records lazily-created .bookmarks, NOT experiment membership).
-name = os.environ["EXP_NAME"]
-ws = os.path.expanduser(os.environ["TC_WS"])
-found = set()
-for proj in glob.glob(os.path.join(ws, "*")):
-    exp = os.path.join(proj, "Experiments", name)
-    traces = os.path.join(proj, "Traces")
-    if not os.path.isdir(exp) or not os.path.isdir(traces):
-        continue
-    for root, subdirs, files in os.walk(exp):
-        for entry in files + subdirs:
-            rel = os.path.relpath(os.path.join(root, entry), exp)
-            real = os.path.join(traces, rel)
-            if os.path.isfile(os.path.join(real, "metadata")):
-                found.add(real)
-for d in sorted(found):
-    print(d)
-PY
-)
+          done <<< "$resolved_out"
           if [ "${#resolved[@]}" -gt 0 ]; then
             args=("${args[@]:0:$((n-1))}" "${resolved[@]}")
           fi   # unresolved: pass through; the adapter warns and skips it
